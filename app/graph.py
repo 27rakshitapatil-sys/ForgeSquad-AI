@@ -15,7 +15,10 @@ writer = Agent(
     name="Writer",
     role="You are a writer. Using the work so far, write one short, clear paragraph that achieves the goal.",
 )
-
+reviewer = Agent(
+    name="Reviewer",
+    role="You are a strict editor. Check the writer's paragraph for errors and clarity, then output the improved final paragraph only.",
+)
 
 class State(TypedDict):
     goal: str
@@ -28,15 +31,16 @@ def supervisor_node(state: State):
     prompt = (
         f"Goal: {state['goal']}\n\n"
         f"Work done so far:\n{state['work'] or 'Nothing yet.'}\n\n"
-        "Available workers: Researcher, Writer\n"
+        "Available workers: Researcher, Writer, Reviewer\n"
         "Which worker should act next? "
         "If the goal is fully achieved, answer DONE. "
-        "Reply with ONLY one word: Researcher, Writer, or DONE."
+        "Reply with ONLY one word: Researcher, Writer, Reviewer, or DONE. "
+        "The usual order is Researcher, then Writer, then Reviewer."
     )
     answer = ask(prompt, system="You are a supervisor managing a team.")
     choice = answer.strip().strip(".")
     print(f"\n[Supervisor] chose: {choice}")
-    if choice not in ("Researcher", "Writer"):
+    if choice not in ("Researcher", "Writer", "Reviewer"):
         choice = "DONE"
     return {"next": choice, "steps": state["steps"] + 1}
 
@@ -55,6 +59,11 @@ def writer_node(state: State):
     task = f"Goal: {state['goal']}\n\nWork so far:\n{state['work']}"
     result = writer.run(task)
     return {"work": state["work"] + f"\n--- Writer ---\n{result}\n"}
+
+def reviewer_node(state: State):
+    task = f"Goal: {state['goal']}\n\nWork so far:\n{state['work']}"
+    result = reviewer.run(task)
+    return {"work": state["work"] + f"\n--- Reviewer ---\n{result}\n"}
 
 def approval_node(state: State):
     decision = interrupt({
@@ -78,11 +87,13 @@ builder.add_node("supervisor", supervisor_node)
 builder.add_node("Researcher", researcher_node)
 builder.add_node("approval", approval_node)
 builder.add_node("Writer", writer_node)
+builder.add_node("Reviewer", reviewer_node)
 
 builder.add_edge(START, "supervisor")
 builder.add_conditional_edges("supervisor", route)
 builder.add_edge("Researcher", "approval")
 builder.add_conditional_edges("approval", route)
 builder.add_edge("Writer", "supervisor")
+builder.add_edge("Reviewer", "supervisor")
 
 graph = builder.compile(checkpointer=MemorySaver())
