@@ -17,10 +17,11 @@ def _connect():
 
 
 def save_run(goal: str, result: str):
+    clean = result.replace("--- Researcher ---", "").replace("--- Writer ---", "").strip()
     conn = _connect()
     conn.execute(
         "INSERT INTO runs (created_at, goal, result) VALUES (?, ?, ?)",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), goal, result),
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), goal, clean),
     )
     conn.commit()
     conn.close()
