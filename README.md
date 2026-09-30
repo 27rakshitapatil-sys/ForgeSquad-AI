@@ -5,6 +5,7 @@ with tool use, persistent memory, and **human-in-the-loop approval**.
 
 Built with Python, LangGraph, Google Gemini, SQLite, and Streamlit.
 
+![Demo of a finished run](demo.jpg)
 ## Features
 
 - **Supervisor delegation**: an LLM decides which agent works next, or when the goal is done (LangGraph conditional edges)
@@ -89,7 +90,7 @@ AgentOrchestrationSystem/
 
 ## Roadmap
 
-- [ ] Demo screenshot / GIF
+- [x] Demo screenshot
 - [ ] PostgreSQL for run history
 - [ ] ChromaDB for semantic memory (search by meaning)
 - [ ] Redis + Celery for background runs
