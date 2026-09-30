@@ -1,0 +1,10 @@
+calculator_app/
+├── src/
+│   ├── __init__.py
+│   ├── calculator.py
+│   └── main.py
+├── tests/
+│   ├── __init__.py
+│   └── test_calculator.py
+├── README.md
+└── requirements.txt

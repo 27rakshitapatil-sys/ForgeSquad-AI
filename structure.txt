@@ -1,0 +1,12 @@
+calculator_app/
+├── src/
+│   ├── __init__.py
+│   ├── engine.py
+│   ├── validator.py
+│   └── cli.py
+├── tests/
+│   ├── __init__.py
+│   └── test_engine.py
+├── main.py
+├── requirements.txt
+└── README.md
