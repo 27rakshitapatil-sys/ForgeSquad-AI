@@ -1,0 +1,11 @@
+[project]
+name = "calculator_app"
+version = "0.1.0"
+description = "A simple CLI calculator application."
+dependencies = [
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

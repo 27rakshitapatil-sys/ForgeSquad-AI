@@ -1,19 +1,18 @@
-# Simple Calculator App
+# Calculator CLI Application
 
-A CLI-based Python calculator performing basic arithmetic operations.
+A simple command-line calculator supporting addition, subtraction, multiplication, and division.
 
-## Setup
-1. Create a virtual environment: `python -m venv venv`
-2. Activate it: `source venv/bin/activate` (Linux/macOS) or `venv\Scripts\activate` (Windows)
-3. Install dependencies: `pip install -r requirements.txt`
+## Structure
+- `src/calculator.py`: Logic module.
+- `src/main.py`: Entry point/CLI.
+- `tests/test_calculator.py`: Unit tests.
 
-## Running the App
+## Running the application
 ```bash
-export PYTHONPATH=$PYTHONPATH:.
-python src/main.py 5 + 3
+python3 -m src.main
 ```
 
-## Running Tests
+## Running tests
 ```bash
-pytest
+python3 -m unittest tests/test_calculator.py
 ```

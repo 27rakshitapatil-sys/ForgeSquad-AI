@@ -1,33 +1,38 @@
-import argparse
-import sys
-from src.calculator import Calculator
+
+from src.calculator import add, subtract, multiply, divide
 
 def main():
-    parser = argparse.ArgumentParser(description="Simple CLI Calculator")
-    parser.add_argument("x", type=float, help="First number")
-    parser.add_argument("operator", choices=['+', '-', '*', '/'], help="Arithmetic operator")
-    parser.add_argument("y", type=float, help="Second number")
-
-    args = parser.parse_args()
-    calc = Calculator()
-
-    try:
-        if args.operator == '+':
-            result = calc.add(args.x, args.y)
-        elif args.operator == '-':
-            result = calc.subtract(args.x, args.y)
-        elif args.operator == '*':
-            result = calc.multiply(args.x, args.y)
-        elif args.operator == '/':
-            result = calc.divide(args.x, args.y)
-        
-        print(f"Result: {result}")
-    except ZeroDivisionError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        sys.exit(1)
+    print("Welcome to the Calculator App")
+    print("Operations: +, -, *, /")
+    
+    while True:
+        try:
+            num1 = float(input("Enter first number: "))
+            op = input("Enter operation (+, -, *, /): ").strip()
+            num2 = float(input("Enter second number: "))
+            
+            if op == '+':
+                result = add(num1, num2)
+            elif op == '-':
+                result = subtract(num1, num2)
+            elif op == '*':
+                result = multiply(num1, num2)
+            elif op == '/':
+                result = divide(num1, num2)
+            else:
+                print("Invalid operation.")
+                continue
+                
+            print(f"Result: {result}")
+            
+        except ValueError as e:
+            print(f"Error: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            
+        cont = input("Do you want to perform another calculation? (y/n): ").lower()
+        if cont != 'y':
+            break
 
 if __name__ == "__main__":
     main()

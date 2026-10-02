@@ -1,0 +1,10 @@
+calculator_project/
+├── src/
+│   ├── __init__.py
+│   ├── calculator_engine.py    # Core arithmetic logic
+│   └── main.py                 # CLI entry point
+├── tests/
+│   ├── __init__.py
+│   └── test_calculator.py      # pytest suite
+├── requirements.txt
+└── README.md

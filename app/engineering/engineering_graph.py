@@ -1,270 +1,452 @@
-import time
-from functools import wraps
+from pathlib import Path
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
-from app.engineering.software_agents import (
-    project_manager,
-    architect,
-    developer,
-    database_engineer,
-    tester,
-    debugger,
-    code_reviewer,
-)
+from app.engineering.software_agents import SOFTWARE_ENGINEERING_SQUAD
 
 
-# =========================================================
-# SETTINGS
-# =========================================================
+# ============================================================
+# PROJECT FILE COLLECTION SETTINGS
+# ============================================================
 
-# Pause after each agent so token usage spreads across the minute.
-AGENT_PAUSE_SECONDS = 5
+MAX_PROJECT_FILE_CHARS = 20000
+
+IGNORED_DIRECTORIES = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+
+IGNORED_FILE_NAMES = {
+    ".DS_Store",
+}
+
+IGNORED_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+}
 
 
-# =========================================================
-# FORGESQUAD AI — ENGINEERING STATE
-# =========================================================
+# ============================================================
+# ENGINEERING STATE
+# ============================================================
 
 class EngineeringState(TypedDict):
     requirement: str
+    project_root: str
+
     project_plan: str
     architecture: str
     implementation: str
     database_design: str
+
     test_report: str
     debugging_report: str
     review: str
+
     test_status: str
     debug_count: int
 
-
-# =========================================================
-# HELPERS
-# =========================================================
-
-def compact(text: str, limit: int = 3500) -> str:
-    """Limit previous agent output sent to Gemini."""
-
-    if not text:
-        return ""
-
-    text = str(text)
-
-    if len(text) <= limit:
-        return text
-
-    return text[:limit] + "\n\n[Previous output truncated.]"
+    generated_files: dict[str, str]
 
 
-def paced(fn):
-    """Sleep briefly after a node finishes to avoid quota spikes."""
+# ============================================================
+# PROJECT FILE COLLECTION
+# ============================================================
 
-    @wraps(fn)
-    def wrapper(state):
-        result = fn(state)
-        time.sleep(AGENT_PAUSE_SECONDS)
-        return result
+def collect_generated_files(project_root: str) -> dict[str, str]:
+    """
+    Collect only the files generated inside the current
+    engineering run's isolated project directory.
+    """
 
-    return wrapper
+    workspace_dir = Path.cwd().resolve() / "workspace"
+    project_dir = (workspace_dir / project_root).resolve()
+
+    if not project_dir.exists():
+        print(
+            f"[Code Reviewer] project directory not found: "
+            f"{project_root}"
+        )
+        return {}
+
+    if not project_dir.is_dir():
+        print(
+            f"[Code Reviewer] project path is not a directory: "
+            f"{project_root}"
+        )
+        return {}
+
+    generated_files = {}
+
+    for path in project_dir.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        # Ignore unwanted directories.
+        if any(
+            ignored in path.parts
+            for ignored in IGNORED_DIRECTORIES
+        ):
+            continue
+
+        if path.name in IGNORED_FILE_NAMES:
+            continue
+
+        if path.suffix.lower() in IGNORED_SUFFIXES:
+            continue
+
+        try:
+            content = path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception:
+            continue
+
+        if len(content) > MAX_PROJECT_FILE_CHARS:
+            omitted = len(content) - MAX_PROJECT_FILE_CHARS
+
+            content = (
+                content[:MAX_PROJECT_FILE_CHARS]
+                + f"\n\n"
+                f"[... file truncated, "
+                f"{omitted} more characters ...]"
+            )
+
+        # Store paths relative to the generated project root.
+        relative_path = path.relative_to(project_dir)
+
+        generated_files[
+            relative_path.as_posix()
+        ] = content
+
+    generated_files = dict(
+        sorted(generated_files.items())
+    )
+
+    print(
+        f"[Code Reviewer] captured "
+        f"{len(generated_files)} project files "
+        f"from {project_root}."
+    )
+
+    return generated_files
 
 
-# =========================================================
+# ============================================================
 # PROJECT MANAGER
-# =========================================================
+# ============================================================
 
 def project_manager_node(state: EngineeringState):
-    print("\n[Project Manager] analyzing requirement...")
 
-    result = project_manager.run(
-        f"""
+    requirement = state["requirement"]
+
+    prompt = f"""
+You are the Project Manager of an autonomous software
+engineering squad.
+
 User requirement:
+{requirement}
 
-{state['requirement']}
-
-Create a concise engineering plan.
+Create a clear software development plan.
 
 Include:
-- Required features
-- Engineering tasks
-- Dependencies
-- Implementation order
 
-Keep it concise.
+1. Understanding of the requirement
+2. Main features
+3. Functional requirements
+4. Non-functional requirements
+5. Development tasks
+6. Testing requirements
+7. Expected final deliverables
+
+Do not write code.
 """
-    )
 
-    return {"project_plan": result}
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Project Manager"
+    ].run(prompt)
+
+    return {
+        "project_plan": result
+    }
 
 
-# =========================================================
+# ============================================================
 # ARCHITECT
-# =========================================================
+# ============================================================
 
 def architect_node(state: EngineeringState):
-    print("\n[Architect] designing architecture...")
 
-    result = architect.run(
-        f"""
+    requirement = state["requirement"]
+    project_plan = state["project_plan"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Software Architect of an autonomous
+software engineering squad.
+
 User requirement:
-
-{state['requirement']}
+{requirement}
 
 Project Manager plan:
+{project_plan}
 
-{compact(state['project_plan'], 3000)}
+The isolated project directory for THIS run is:
 
-Design the software architecture.
+{project_root}
+
+Design the architecture for the software.
 
 Include:
-- Technology choices
-- Project structure
-- Major modules
-- Data flow
-- Important design decisions
 
-Keep it concise.
-"""
-    )
-
-    return {"architecture": result}
-
-
-# =========================================================
-# DEVELOPER
-# =========================================================
-
-def developer_node(state: EngineeringState):
-    print("\n[Developer] implementing project...")
-
-    previous_debug = (
-        compact(state["debugging_report"], 2500)
-        if state["debugging_report"]
-        else "None"
-    )
-
-    result = developer.run(
-        f"""
-User requirement:
-
-{state['requirement']}
-
-Project plan:
-
-{compact(state['project_plan'], 2500)}
-
-Architecture:
-
-{compact(state['architecture'], 3000)}
-
-Database design:
-
-{compact(state['database_design'], 2000) or "Not designed yet."}
-
-Previous debugging report:
-
-{previous_debug}
-
-Implement the required software.
+1. Technology choices
+2. Project structure
+3. Main modules
+4. Responsibilities of each module
+5. Data flow
+6. Testing structure
+7. How the project will be executed
 
 IMPORTANT:
-- Inspect relevant existing files first.
-- Preserve existing functionality.
-- Use the available file tools.
-- If a debugging report exists, fix the identified problem.
-- Write implementation files when appropriate.
-- Do not make unrelated changes.
 
-After implementation, briefly summarize what was changed.
+All implementation files must eventually be created
+inside:
+
+{project_root}
+
+Do not write code yet.
 """
-    )
 
-    return {"implementation": result}
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Architect"
+    ].run(prompt)
+
+    return {
+        "architecture": result
+    }
 
 
-# =========================================================
-# DATABASE ENGINEER
-# =========================================================
+# ============================================================
+# DEVELOPER
+# ============================================================
 
-def database_engineer_node(state: EngineeringState):
-    print("\n[Database Engineer] designing database...")
+def developer_node(state: EngineeringState):
 
-    result = database_engineer.run(
-        f"""
+    requirement = state["requirement"]
+    architecture = state["architecture"]
+    project_plan = state["project_plan"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Developer of an autonomous software
+engineering squad.
+
 User requirement:
+{requirement}
 
-{state['requirement']}
+Project Manager plan:
+{project_plan}
 
 Architecture:
+{architecture}
 
-{compact(state['architecture'], 2500)}
+============================================================
+CURRENT PROJECT ROOT
+============================================================
 
-Developer implementation:
+{project_root}
 
-{compact(state['implementation'], 2000)}
+============================================================
 
-Determine whether persistent database storage is required.
+YOUR TASK
+============================================================
 
-If not required, return exactly:
+Actually BUILD the software.
+
+This is not a theoretical response.
+
+You must create the actual project files using the
+available write_project_file tool.
+
+ALL files for this engineering run MUST be created
+inside:
+
+{project_root}
+
+Do NOT create files outside this directory.
+
+For example:
+
+{project_root}/src/main.py
+{project_root}/src/calculator.py
+{project_root}/tests/test_calculator.py
+{project_root}/README.md
+
+Use write_project_file for every source code,
+test, configuration, and documentation file that
+the project needs.
+
+Requirements:
+
+1. Implement the requested functionality.
+2. Create a clean project structure.
+3. Create executable source code.
+4. Create automated tests.
+5. Handle required error cases safely.
+6. Create a README explaining the project.
+7. Do not merely describe code in your response.
+8. Actually write the files into the project root.
+9. Do not modify unrelated projects.
+10. Do not write anything outside {project_root}.
+
+If files already exist inside {project_root}, inspect them
+and improve them instead of creating duplicate files.
+
+After writing the files, briefly report which files
+you created or modified.
+"""
+
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Developer"
+    ].run(prompt)
+
+    return {
+        "implementation": result
+    }
+
+
+# ============================================================
+# DATABASE ENGINEER
+# ============================================================
+
+def database_engineer_node(state: EngineeringState):
+
+    requirement = state["requirement"]
+    architecture = state["architecture"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Database Engineer of an autonomous
+software engineering squad.
+
+User requirement:
+{requirement}
+
+Architecture:
+{architecture}
+
+Project root:
+{project_root}
+
+Determine whether the application requires a database.
+
+If a database is NOT required, clearly state:
 
 NO DATABASE REQUIRED
 
-Otherwise include:
-- Database choice
-- Entities
-- Fields
-- Relationships
-- Constraints
-- Indexing considerations
+If a database IS required:
 
-Keep the response concise.
+1. Design the schema.
+2. Identify tables.
+3. Identify fields.
+4. Identify relationships.
+5. Explain how the application should use the database.
+
+Do not modify unrelated projects.
 """
-    )
 
-    return {"database_design": result}
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Database Engineer"
+    ].run(prompt)
+
+    return {
+        "database_design": result
+    }
 
 
-# =========================================================
+# ============================================================
 # TESTER
-# =========================================================
+# ============================================================
 
 def tester_node(state: EngineeringState):
-    print("\n[Tester] testing implementation...")
 
-    # The Tester reads the real files with its tools, so it only
-    # needs a short summary, not the full upstream documents.
-    result = tester.run(
-        f"""
+    requirement = state["requirement"]
+    architecture = state["architecture"]
+    implementation = state["implementation"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Tester of an autonomous software engineering
+squad.
+
 User requirement:
+{requirement}
 
-{state['requirement']}
+Architecture:
+{architecture}
 
-Implementation summary:
+Developer report:
+{implementation}
 
-{compact(state['implementation'], 1500)}
+============================================================
+CURRENT PROJECT ROOT
+============================================================
 
-Database:
+{project_root}
 
-{compact(state['database_design'], 500) or "None"}
+============================================================
 
-Previous debugging report:
+YOUR TASK
+============================================================
 
-{compact(state['debugging_report'], 1000) or "None"}
-
-Test the CURRENT project implementation.
+Test the ACTUAL generated project.
 
 IMPORTANT:
-- Inspect the actual project files.
-- Run appropriate safe test/validation commands.
-- Inspect the actual command output.
-- Identify real failures only.
-- Do not modify source code.
-- Do not assume a failure without evidence.
-- Also run the application entry point with sample arguments, including one error case such as division by zero.
-- A passing unit test suite alone is not enough for STATUS: PASS.
 
-At the VERY END write exactly one:
+The project for this run exists ONLY inside:
+
+{project_root}
+
+Do NOT inspect or test unrelated projects.
+
+First inspect the files inside the project root.
+
+Identify the actual project structure.
+
+Then run the appropriate automated tests.
+
+Run commands from the project root when necessary.
+
+For example, if the project contains:
+
+{project_root}/tests/test_calculator.py
+
+you should test that project from:
+
+{project_root}
+
+Use the existing testing framework when available.
+
+Do NOT modify source code.
+
+Do NOT create fake test results.
+
+Do NOT fail because the program expects interactive
+stdin. Test the underlying functionality using the
+automated test suite.
+
+Your final response MUST end with EXACTLY ONE of:
 
 STATUS: PASS
 
@@ -272,74 +454,110 @@ or
 
 STATUS: FAIL
 
-Use FAIL only for a confirmed error,
-failing test, broken functionality, or
-significant unresolved problem.
+If tests fail, clearly explain:
 
-Keep the report concise.
+1. Which tests failed
+2. The error
+3. The likely cause
+4. What the Developer/Debugger should fix
+
+If all required tests pass, clearly state the
+successful test results before:
+
+STATUS: PASS
 """
-    )
 
-    upper_result = result.upper()
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Tester"
+    ].run(prompt)
 
-    if "STATUS: FAIL" in upper_result:
-        test_status = "FAIL"
-    elif "STATUS: PASS" in upper_result:
-        test_status = "PASS"
+    # Explicit status detection.
+    normalized = result.upper()
+
+    if "STATUS: PASS" in normalized:
+        status = "PASS"
+    elif "STATUS: FAIL" in normalized:
+        status = "FAIL"
     else:
-        test_status = "FAIL"
-
-    print(f"[Tester] status: {test_status}")
+        status = "FAIL"
 
     return {
         "test_report": result,
-        "test_status": test_status,
+        "test_status": status,
     }
 
 
-# =========================================================
+# ============================================================
 # DEBUGGER
-# =========================================================
+# ============================================================
 
 def debugger_node(state: EngineeringState):
-    print("\n[Debugger] investigating failure...")
 
-    result = debugger.run(
-        f"""
+    requirement = state["requirement"]
+    architecture = state["architecture"]
+    implementation = state["implementation"]
+    test_report = state["test_report"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Debugger of an autonomous software
+engineering squad.
+
 User requirement:
+{requirement}
 
-{state['requirement']}
+Architecture:
+{architecture}
 
-Testing report:
+Developer report:
+{implementation}
 
-{compact(state['test_report'], 3000)}
+Tester report:
+{test_report}
 
-Implementation summary:
+============================================================
+CURRENT PROJECT ROOT
+============================================================
 
-{compact(state['implementation'], 1500)}
+{project_root}
 
-Investigate the confirmed testing failure.
+============================================================
 
-IMPORTANT:
-- Inspect the relevant source files.
-- Run diagnostic/test commands.
-- Examine actual error output.
-- Identify the root cause.
-- Do not modify source code.
+YOUR TASK
+============================================================
 
-Give the Developer a precise targeted fix.
+Fix the ACTUAL project files causing the test failures.
 
-Return:
-1. Error
-2. Root cause
-3. Affected component
-4. Evidence
-5. Proposed fix
-6. Verification steps
+The project exists ONLY inside:
 
-Keep the response concise.
+{project_root}
+
+Inspect the files there using read_project_file.
+
+Run relevant commands/tests using run_project_command.
+
+Identify the root cause.
+
+Then modify the necessary files using
+write_project_file.
+
+Do NOT modify unrelated projects.
+
+Do NOT only explain the fix.
+
+Actually fix the code.
+
+After fixing the problem, briefly report:
+
+1. Root cause
+2. Files changed
+3. Fix applied
+4. Tests that should be rerun
 """
-    )
+
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Debugger"
+    ].run(prompt)
 
     return {
         "debugging_report": result,
@@ -347,139 +565,181 @@ Keep the response concise.
     }
 
 
-# =========================================================
+# ============================================================
 # CODE REVIEWER
-# =========================================================
+# ============================================================
 
 def code_reviewer_node(state: EngineeringState):
-    print("\n[Code Reviewer] performing final review...")
 
-    result = code_reviewer.run(
-        f"""
+    requirement = state["requirement"]
+    architecture = state["architecture"]
+    implementation = state["implementation"]
+    test_report = state["test_report"]
+    debugging_report = state["debugging_report"]
+    project_root = state["project_root"]
+
+    prompt = f"""
+You are the Code Reviewer of an autonomous software
+engineering squad.
+
 User requirement:
-
-{state['requirement']}
-
-Project plan:
-
-{compact(state['project_plan'], 1500)}
+{requirement}
 
 Architecture:
+{architecture}
 
-{compact(state['architecture'], 2000)}
+Implementation report:
+{implementation}
 
-Implementation:
-
-{compact(state['implementation'], 2500)}
-
-Database:
-
-{compact(state['database_design'], 800) or "None"}
-
-Testing report:
-
-{compact(state['test_report'], 2000)}
+Test report:
+{test_report}
 
 Debugging report:
+{debugging_report}
 
-{compact(state['debugging_report'], 1500) or "None"}
+Project root:
+{project_root}
 
-Perform the final software engineering review.
+Review the completed software engineering work.
 
 Check:
-- Requirement coverage
-- Correctness
-- Security
-- Maintainability
-- Potential regressions
-- Unnecessary complexity
 
-Keep the final review concise.
+1. Requirement coverage
+2. Code quality
+3. Project structure
+4. Error handling
+5. Automated tests
+6. Maintainability
+7. Documentation
+
+If the implementation satisfies the requirement,
+approve it.
+
+If there are minor improvements, mention them without
+blocking an otherwise working implementation.
+
+Provide a concise final code review.
 """
+
+    result = SOFTWARE_ENGINEERING_SQUAD[
+        "Code Reviewer"
+    ].run(prompt)
+
+    # Capture ONLY the current project's files.
+    generated_files = collect_generated_files(
+        project_root
     )
 
-    return {"review": result}
+    return {
+        "review": result,
+        "generated_files": generated_files,
+    }
 
 
-# =========================================================
-# ROUTERS
-# =========================================================
-
-def after_developer_router(state: EngineeringState):
-    """Design the database only once, not on every debug loop."""
-
-    if not state["database_design"]:
-        return "database"
-
-    return "test"
-
+# ============================================================
+# ROUTING
+# ============================================================
 
 def test_router(state: EngineeringState):
 
     if state["test_status"] == "PASS":
-        print("\n[System] Tests passed -> Code Reviewer")
-        return "review"
+        return "code_reviewer"
 
     if state["debug_count"] >= 3:
-        print("\n[System] Maximum debugging attempts reached.")
-        print("[System] Sending project to Code Reviewer.")
-        return "review"
+        return "code_reviewer"
 
-    print("\n[System] Tests failed -> Debugger")
-    return "debug"
+    return "debugger"
 
 
-# =========================================================
-# BUILD LANGGRAPH
-# =========================================================
+# ============================================================
+# GRAPH
+# ============================================================
 
 builder = StateGraph(EngineeringState)
 
-builder.add_node("Project Manager", paced(project_manager_node))
-builder.add_node("Architect", paced(architect_node))
-builder.add_node("Developer", paced(developer_node))
-builder.add_node("Database Engineer", paced(database_engineer_node))
-builder.add_node("Tester", paced(tester_node))
-builder.add_node("Debugger", paced(debugger_node))
-builder.add_node("Code Reviewer", paced(code_reviewer_node))
-
-
-# =========================================================
-# FLOW
-# =========================================================
-
-builder.add_edge(START, "Project Manager")
-builder.add_edge("Project Manager", "Architect")
-builder.add_edge("Architect", "Developer")
-
-# Developer -> Database Engineer (first pass only) or straight to Tester
-builder.add_conditional_edges(
-    "Developer",
-    after_developer_router,
-    {
-        "database": "Database Engineer",
-        "test": "Tester",
-    },
+builder.add_node(
+    "project_manager",
+    project_manager_node,
 )
 
-builder.add_edge("Database Engineer", "Tester")
+builder.add_node(
+    "architect",
+    architect_node,
+)
 
-# Tester -> Debugger / Code Reviewer
+builder.add_node(
+    "developer",
+    developer_node,
+)
+
+builder.add_node(
+    "database_engineer",
+    database_engineer_node,
+)
+
+builder.add_node(
+    "tester",
+    tester_node,
+)
+
+builder.add_node(
+    "debugger",
+    debugger_node,
+)
+
+builder.add_node(
+    "code_reviewer",
+    code_reviewer_node,
+)
+
+
+# ============================================================
+# FLOW
+# ============================================================
+
+builder.add_edge(
+    START,
+    "project_manager",
+)
+
+builder.add_edge(
+    "project_manager",
+    "architect",
+)
+
+builder.add_edge(
+    "architect",
+    "developer",
+)
+
+builder.add_edge(
+    "developer",
+    "database_engineer",
+)
+
+builder.add_edge(
+    "database_engineer",
+    "tester",
+)
+
 builder.add_conditional_edges(
-    "Tester",
+    "tester",
     test_router,
     {
-        "debug": "Debugger",
-        "review": "Code Reviewer",
+        "debugger": "debugger",
+        "code_reviewer": "code_reviewer",
     },
 )
 
-builder.add_edge("Debugger", "Developer")
-builder.add_edge("Code Reviewer", END)
+builder.add_edge(
+    "debugger",
+    "developer",
+)
 
+builder.add_edge(
+    "code_reviewer",
+    END,
+)
 
-# =========================================================
-# COMPILE
-# =========================================================
 
 engineering_graph = builder.compile()

@@ -1,0 +1,10 @@
+# src/
+__init__.py
+calculator_engine.py
+main.py
+# tests/
+__init__.py
+test_calculator.py
+# Root
+requirements.txt
+README.md
